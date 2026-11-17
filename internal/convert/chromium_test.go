@@ -91,6 +91,29 @@ func TestInjectCSPFirst(t *testing.T) {
 	}
 }
 
+func TestInjectPrintCSSKeepsByteOffsets(t *testing.T) {
+	html := []byte("<html><head><title>İstanbul</title></head><body>x</body></html>")
+	got := injectPrintCSS(html, defaultPrintCSS)
+	titleAt := bytes.Index(got, []byte("</title>"))
+	headAt := bytes.Index(got, []byte("</head>"))
+	cssAt := bytes.Index(got, []byte(defaultPrintCSS))
+	if titleAt < 0 || cssAt != titleAt+len("</title>") || headAt != cssAt+len(defaultPrintCSS) {
+		t.Fatalf("css %d title %d head %d\n%s", cssAt, titleAt, headAt, got)
+	}
+
+	upper := []byte("<HTML><HEAD><TITLE>x</TITLE></HEAD><BODY>x</BODY></HTML>")
+	got = injectPrintCSS(upper, "<style>x</style>")
+	if !bytes.Contains(got, []byte("</TITLE><style>x</style></HEAD>")) {
+		t.Fatalf("upper head: %s", got)
+	}
+
+	noHead := []byte("<HTML lang=\"tr\"><body>x</body></HTML>")
+	got = injectPrintCSS(noHead, "<style>x</style>")
+	if !bytes.HasPrefix(got, []byte("<HTML lang=\"tr\"><style>x</style>")) {
+		t.Fatalf("html open: %s", got)
+	}
+}
+
 func TestDefaultPrintCSSGoesBeforeHeadClose(t *testing.T) {
 	html := []byte("<!doctype html><html><head><title>x</title></head><body>x</body></html>")
 	got := injectPrintCSS(injectCSPFirst(html, cspNoScriptMeta), defaultPrintCSS)

@@ -95,8 +95,21 @@ var (
 	cspDoctypePrefix = []byte("<!doctype")
 )
 
+// bytes.ToLower follows Unicode case mapping. U+0130 (İ) shrinks from two
+// UTF-8 bytes to one, so an index into that copy misses the original.
+func asciiLower(b []byte) []byte {
+	out := make([]byte, len(b))
+	for i, c := range b {
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		out[i] = c
+	}
+	return out
+}
+
 func injectPrintCSS(html []byte, css string) []byte {
-	lower := bytes.ToLower(html)
+	lower := asciiLower(html)
 	if idx := bytes.Index(lower, headCloseTag); idx >= 0 {
 		return spliceAt(html, idx, css)
 	}

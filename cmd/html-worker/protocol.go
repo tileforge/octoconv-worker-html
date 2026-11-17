@@ -936,8 +936,7 @@ func renewRetryWait(leaseUntil time.Time, failures int) time.Duration {
 	if remaining <= 0 {
 		return 0
 	}
-	const slack = 20 * time.Millisecond
-	latest := remaining - slack
+	latest := remaining - leaseRenewSlack
 	if latest < time.Millisecond {
 		latest = remaining / 2
 	}
@@ -950,18 +949,29 @@ func renewRetryWait(leaseUntil time.Time, failures int) time.Duration {
 	return latest
 }
 
+// The renew timer has to fire while the lease is still open. The loop treats
+// the expiry instant as already lost and does not POST /lease.
+const leaseRenewSlack = 20 * time.Millisecond
+
 func cappedWait(leaseUntil time.Time, interval time.Duration) time.Duration {
 	if leaseUntil.IsZero() {
 		return interval
 	}
 	remaining := time.Until(leaseUntil)
-	if remaining < 0 {
+	if remaining <= 0 {
 		return 0
 	}
-	if interval < remaining {
+	latest := remaining - leaseRenewSlack
+	if latest < time.Millisecond {
+		latest = remaining / 2
+	}
+	if latest < time.Millisecond {
+		return 0
+	}
+	if interval < latest {
 		return interval
 	}
-	return remaining
+	return latest
 }
 
 func leaseCovers(leaseUntil, deadline time.Time) bool {

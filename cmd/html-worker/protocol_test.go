@@ -324,6 +324,25 @@ func TestRenewRetryWaitStaysInsideTheLease(t *testing.T) {
 	}
 }
 
+func TestCappedWaitRenewsBeforeExpiry(t *testing.T) {
+	if got := cappedWait(time.Time{}, 15*time.Second); got != 15*time.Second {
+		t.Fatalf("open lease %s", got)
+	}
+	if got := cappedWait(time.Now().Add(-time.Second), renewEvery(30)); got != 0 {
+		t.Fatalf("expired %s", got)
+	}
+	long := time.Now().Add(time.Minute)
+	if got := cappedWait(long, renewEvery(30)); got != 15*time.Second {
+		t.Fatalf("half interval %s", got)
+	}
+	until := time.Now().Add(10 * time.Second)
+	before := time.Now()
+	got := cappedWait(until, renewEvery(30))
+	if got <= 0 || !before.Add(got).Before(until.Add(-10*time.Millisecond)) {
+		t.Fatalf("short remainder %s until %s", got, until)
+	}
+}
+
 func TestFailedRenewRetriesBeforeExpiry(t *testing.T) {
 	var mu sync.Mutex
 	posts := 0

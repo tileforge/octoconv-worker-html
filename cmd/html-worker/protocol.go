@@ -821,7 +821,7 @@ func (c *protocolClient) convert(ctx context.Context, from, to string, src []byt
 	if !ok {
 		return nil, fmt.Errorf("no converter for %s %s to %s", c.operation, from, to)
 	}
-	dir, err := os.MkdirTemp("", "octoconv-html-")
+	dir, err := convert.MakeTempDir("", "octoconv-html-")
 	if err != nil {
 		return nil, err
 	}

@@ -13,8 +13,11 @@ func init() {
 }
 
 // ChromiumConverter shells out to chromium-headless-shell for html to pdf.
-// A zero value runs the binary directly. It does not apply Landlock.
-type ChromiumConverter struct{}
+// A zero value runs the binary directly and does not apply Landlock.
+type ChromiumConverter struct {
+	sandbox   *engineSandbox
+	sharedTmp string
+}
 
 // Pairs returns the single html to pdf pair.
 func (ChromiumConverter) Pairs() []Pair {
@@ -24,23 +27,28 @@ func (ChromiumConverter) Pairs() []Pair {
 const cspNoScriptMeta = `<meta http-equiv="Content-Security-Policy" content="script-src 'none'; object-src 'none'; frame-src 'none'; child-src 'none'">`
 
 // Convert renders inPath to outPath. opts are the assignment parameters.
-func (ChromiumConverter) Convert(ctx context.Context, inPath, outPath string, opts map[string]any) error {
+func (c ChromiumConverter) Convert(ctx context.Context, inPath, outPath string, opts map[string]any) error {
 	parsed, err := htmlOptsFromMap(opts)
 	if err != nil {
 		return fmt.Errorf("chromium: %w", err)
+	}
+	workDir := filepath.Dir(outPath)
+	if c.sharedTmp != "" {
+		if err := sweepSharedTmp(c.sharedTmp, workDir); err != nil {
+			return fmt.Errorf("chromium: %w", err)
+		}
 	}
 	input, err := os.ReadFile(inPath)
 	if err != nil {
 		return fmt.Errorf("chromium: read input: %w", err)
 	}
-	workDir := filepath.Dir(outPath)
 	rendered := injectPrintCSS(injectCSPFirst(input, cspNoScriptMeta), buildPrintCSS(parsed))
 	renderedPath := filepath.Join(workDir, "rendered.html")
 	if err := os.WriteFile(renderedPath, rendered, 0o600); err != nil {
 		return fmt.Errorf("chromium: write rendered html: %w", err)
 	}
 	args := chromiumPrintArgs(workDir, outPath, "file://"+renderedPath)
-	if err := runCommand(ctx, engineEnv(""), "chromium-headless-shell", args...); err != nil {
+	if err := c.exec(workDir).run(ctx, "chromium-headless-shell", args...); err != nil {
 		return fmt.Errorf("chromium: %w", err)
 	}
 	if err := validatePDF(outPath); err != nil {

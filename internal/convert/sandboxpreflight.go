@@ -17,11 +17,11 @@ type preflightWorkspace struct {
 }
 
 func newPreflightWorkspaceOutside(class, outsideBase string) (preflightWorkspace, func(), error) {
-	jobDir, err := os.MkdirTemp("", class+"-preflight-job-")
+	jobDir, err := MakeTempDir("", class+"-preflight-job-")
 	if err != nil {
 		return preflightWorkspace{}, nil, fmt.Errorf("preflight job directory: %w", err)
 	}
-	outsideDir, err := os.MkdirTemp(outsideBase, class+"-preflight-outside-")
+	outsideDir, err := MakeTempDir(outsideBase, class+"-preflight-outside-")
 	if err != nil {
 		os.RemoveAll(jobDir)
 		return preflightWorkspace{}, nil, fmt.Errorf("preflight outside directory: %w", err)
@@ -84,6 +84,22 @@ func canonicalPath(p string) (string, error) {
 		return "", err
 	}
 	return filepath.EvalSymlinks(abs)
+}
+
+// MakeTempDir creates a directory and returns its resolved path.
+// MkdirTemp keeps a TMPDIR symlink in the returned path. The sweep deletes
+// that symlink when it lies inside /tmp, so the caller must keep this path.
+func MakeTempDir(base, pattern string) (string, error) {
+	dir, err := os.MkdirTemp(base, pattern)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := canonicalPath(dir)
+	if err != nil {
+		os.RemoveAll(dir)
+		return "", err
+	}
+	return resolved, nil
 }
 
 func resolveExisting(p string) string {

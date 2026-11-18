@@ -176,6 +176,40 @@ func TestMakeTempDirSurvivesSweepOfItsAlias(t *testing.T) {
 	}
 }
 
+func TestRetainResolvedPathSurvivesSweep(t *testing.T) {
+	root := t.TempDir()
+	keep := filepath.Join(root, "current")
+	if err := os.MkdirAll(keep, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(t.TempDir(), "client.key")
+	if err := os.WriteFile(secret, []byte("key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "client.key")
+	if err := os.Symlink(secret, alias); err != nil {
+		t.Fatal(err)
+	}
+	const name = "HTML_PROTOCOL_CLIENT_KEY"
+	t.Setenv(name, alias)
+	if err := RetainResolvedPath(name); err != nil {
+		t.Fatal(err)
+	}
+	if err := sweepSharedTmp(root, keep); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(alias); !os.IsNotExist(err) {
+		t.Fatalf("alias survived: %v", err)
+	}
+	got, err := os.ReadFile(os.Getenv(name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "key" {
+		t.Fatalf("key %q", got)
+	}
+}
+
 func TestSecondJobSurvivesSweepOfTmpdirAlias(t *testing.T) {
 	root := t.TempDir()
 	jobsPath := filepath.Join(root, "jobs")

@@ -107,6 +107,24 @@ func MakeTempDir(base, pattern string) (string, error) {
 	return resolved, nil
 }
 
+// RetainResolvedPath points name at the file its value resolves to.
+// A symlink under /tmp is swept even when the file it names is outside /tmp,
+// and a later open of the original path then fails.
+func RetainResolvedPath(name string) error {
+	raw, ok := os.LookupEnv(name)
+	if !ok || raw == "" {
+		return nil
+	}
+	resolved, err := canonicalPath(raw)
+	if err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	if resolved == raw {
+		return nil
+	}
+	return os.Setenv(name, resolved)
+}
+
 // StabilizeTempDir points TMPDIR at the directory it resolves to.
 // os.MkdirTemp reads TMPDIR on every call. The sweep can remove a symlink
 // inside /tmp that the variable still names, and the next call then fails.

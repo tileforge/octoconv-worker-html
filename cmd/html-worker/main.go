@@ -48,6 +48,9 @@ func main() {
 	}
 
 	if len(sandboxHelper) > 0 {
+		if err := retainProtocolPaths(); err != nil {
+			log.Fatalf("html sandbox: %v", err)
+		}
 		if err := refuseSweptProtocolFiles(); err != nil {
 			log.Fatalf("html sandbox: %v", err)
 		}
@@ -78,6 +81,15 @@ func main() {
 	if err := runProtocol(ctx, dial); err != nil {
 		log.Fatalf("html protocol: %v", err)
 	}
+}
+
+func retainProtocolPaths() error {
+	for _, name := range []string{envProtocolCert, envProtocolKey, envProtocolCA, envProtocolManifest} {
+		if err := convert.RetainResolvedPath(name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func refuseSweptProtocolFiles() error {

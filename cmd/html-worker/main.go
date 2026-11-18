@@ -47,6 +47,12 @@ func main() {
 		log.Printf("html sandbox: landlock via %s", strings.Join(sandboxHelper, " "))
 	}
 
+	if len(sandboxHelper) > 0 {
+		if err := refuseSweptProtocolFiles(); err != nil {
+			log.Fatalf("html sandbox: %v", err)
+		}
+	}
+
 	preflightCtx, cancelPreflight := context.WithTimeout(ctx, 60*time.Second)
 	proof, err := convert.HTMLPreflight(preflightCtx, conv)
 	cancelPreflight()
@@ -69,6 +75,24 @@ func main() {
 	if err := runProtocol(ctx, dial); err != nil {
 		log.Fatalf("html protocol: %v", err)
 	}
+}
+
+func refuseSweptProtocolFiles() error {
+	files := []struct {
+		name string
+		path string
+	}{
+		{envProtocolCert, os.Getenv(envProtocolCert)},
+		{envProtocolKey, os.Getenv(envProtocolKey)},
+		{envProtocolCA, os.Getenv(envProtocolCA)},
+		{envProtocolManifest, os.Getenv(envProtocolManifest)},
+	}
+	for _, file := range files {
+		if err := convert.RefuseSharedTmpPath(file.name, file.path); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func refuseLegacyStores() error {

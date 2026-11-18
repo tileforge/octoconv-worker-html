@@ -56,6 +56,51 @@ func resolveOrClean(p string) string {
 	return filepath.Clean(p)
 }
 
+func pathUnder(path, root string) (bool, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false, err
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return false, err
+	}
+	rel, err := filepath.Rel(resolveExisting(absRoot), resolveExisting(absPath))
+	if err != nil {
+		return false, err
+	}
+	if rel == "." {
+		return true, nil
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false, nil
+	}
+	return true, nil
+}
+
+func resolveExisting(p string) string {
+	p = filepath.Clean(p)
+	var suffix []string
+	for {
+		if _, err := os.Lstat(p); err == nil {
+			resolved := p
+			if r, err := filepath.EvalSymlinks(p); err == nil {
+				resolved = r
+			}
+			for i := len(suffix) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, suffix[i])
+			}
+			return filepath.Clean(resolved)
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return p
+		}
+		suffix = append(suffix, filepath.Base(p))
+		p = parent
+	}
+}
+
 func (w preflightWorkspace) place(name string, data []byte) (inside, outside string, err error) {
 	inside = filepath.Join(w.jobDir, name)
 	outside = filepath.Join(w.outsideDir, name)

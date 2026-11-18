@@ -69,6 +69,100 @@ func TestOutsideAccessDenied(t *testing.T) {
 	}
 }
 
+func TestSweepRemovesSiblingsUnderAncestor(t *testing.T) {
+	root := t.TempDir()
+	keep := filepath.Join(root, "jobs", "current")
+	if err := os.MkdirAll(keep, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(keep, "in.html"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(root, "jobs", "old")
+	if err := os.MkdirAll(old, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(old, "secret"), []byte("s"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	junk := filepath.Join(root, "junk")
+	if err := os.WriteFile(junk, []byte("j"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := sweepSharedTmp(root, keep); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(keep, "in.html")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Fatalf("old job survived: %v", err)
+	}
+	if _, err := os.Stat(junk); !os.IsNotExist(err) {
+		t.Fatalf("junk survived: %v", err)
+	}
+}
+
+func TestPathUnderFollowsSymlinks(t *testing.T) {
+	root := t.TempDir()
+	inside := filepath.Join(root, "a", "key")
+	if err := os.MkdirAll(filepath.Dir(inside), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(inside, []byte("k"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	under, err := pathUnder(inside, root)
+	if err != nil || !under {
+		t.Fatalf("inside = %v, %v", under, err)
+	}
+	missing := filepath.Join(root, "missing.key")
+	under, err = pathUnder(missing, root)
+	if err != nil || !under {
+		t.Fatalf("missing = %v, %v", under, err)
+	}
+	other := t.TempDir()
+	link := filepath.Join(other, "link")
+	if err := os.Symlink(inside, link); err != nil {
+		t.Fatal(err)
+	}
+	under, err = pathUnder(link, root)
+	if err != nil || !under {
+		t.Fatalf("symlink = %v, %v", under, err)
+	}
+	under, err = pathUnder(filepath.Join(other, "plain.key"), root)
+	if err != nil || under {
+		t.Fatalf("outside = %v, %v", under, err)
+	}
+}
+
+func TestRefuseSharedTmpPath(t *testing.T) {
+	if err := RefuseSharedTmpPath("HTML_PROTOCOL_CLIENT_KEY", ""); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := os.MkdirTemp(sharedTmpDir, "html-sweep-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	key := filepath.Join(dir, "client.key")
+	if err := os.WriteFile(key, []byte("k"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RefuseSharedTmpPath("HTML_PROTOCOL_CLIENT_KEY", key); err == nil || !strings.Contains(err.Error(), sharedTmpDir) {
+		t.Fatalf("key under shared tmp: %v", err)
+	}
+	outside := filepath.Join(t.TempDir(), "client.key")
+	if under, err := pathUnder(outside, sharedTmpDir); err != nil {
+		t.Fatal(err)
+	} else if under {
+		t.Skip("temp dir is under the shared tmp")
+	}
+	if err := RefuseSharedTmpPath("HTML_PROTOCOL_CLIENT_KEY", outside); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRequireDeniedPDF(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := requireDeniedPDF(filepath.Join(dir, "missing.pdf"), []byte("m")); err == nil {

@@ -54,20 +54,45 @@ func ConfinedChromium(helper []string, concurrency int, concurrencyEnv string) (
 
 // os.RemoveAll on a symlink removes the symlink, not its target.
 func sweepSharedTmp(dir, keep string) error {
-	cleanDir := filepath.Clean(dir)
-	cleanKeep := filepath.Clean(keep)
-	entries, err := os.ReadDir(cleanDir)
+	return sweepExcept(filepath.Clean(dir), filepath.Clean(keep))
+}
+
+func sweepExcept(dir, keep string) error {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("%w: sweep %s before the task: %w", ErrEngineSandboxUnavailable, cleanDir, err)
+		return fmt.Errorf("%w: sweep %s before the task: %w", ErrEngineSandboxUnavailable, dir, err)
 	}
+	sep := string(filepath.Separator)
 	for _, e := range entries {
-		p := filepath.Join(cleanDir, e.Name())
-		if p == cleanKeep || strings.HasPrefix(cleanKeep, p+string(filepath.Separator)) {
+		p := filepath.Join(dir, e.Name())
+		switch {
+		case p == keep:
 			continue
+		case strings.HasPrefix(keep, p+sep):
+			if err := sweepExcept(p, keep); err != nil {
+				return err
+			}
+		default:
+			if err := os.RemoveAll(p); err != nil {
+				return fmt.Errorf("%w: sweep %s before the task: %w", ErrEngineSandboxUnavailable, dir, err)
+			}
 		}
-		if err := os.RemoveAll(p); err != nil {
-			return fmt.Errorf("%w: sweep %s before the task: %w", ErrEngineSandboxUnavailable, cleanDir, err)
-		}
+	}
+	return nil
+}
+
+// RefuseSharedTmpPath reports a path the ruleset grants read-write and the
+// sweep deletes. An empty path is ignored.
+func RefuseSharedTmpPath(name, path string) error {
+	if path == "" {
+		return nil
+	}
+	under, err := pathUnder(path, sharedTmpDir)
+	if err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	if under {
+		return fmt.Errorf("%s %s is under %s, which the sandbox grants to the engine and sweeps", name, path, sharedTmpDir)
 	}
 	return nil
 }

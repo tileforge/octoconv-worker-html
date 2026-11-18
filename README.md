@@ -8,4 +8,4 @@ The process reads `HTML_PROTOCOL_CORE_URL`, `HTML_PROTOCOL_CLIENT_CERT`, `HTML_P
 
 `schema/manifest-html-convert.json` is capability `octoconv.convert.html`. It names html to pdf.
 
-`chromium-headless-shell` must be on `PATH`. This process does not apply Landlock. The in-repo html worker does. Do not move html jobs onto this process until that confinement is measured.
+`chromium-headless-shell` must be on `PATH`. The process applies the measured Landlock ruleset and refuses to start when Landlock is unavailable. `HTML_SANDBOX_DISABLED=true` is the only switch that runs the engine without that ruleset. Startup renders inside the job directory and then points the engine at a file outside every grant. A PDF of that file must omit the planted marker. Chromium 156 instead exits with net::ERR_ACCESS_DENIED and writes no PDF; a missing binary or a helper that never started the engine does not count. Approving the manifest is what sends jobs to this process.

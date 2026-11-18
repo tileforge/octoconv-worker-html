@@ -8,16 +8,59 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
+
+	"github.com/tileforge/octoconv-worker-html/internal/convert"
+	"github.com/tileforge/octoconv-worker-html/internal/sandbox"
 )
 
+const htmlSandboxDisabledEnv = "HTML_SANDBOX_DISABLED"
+
 func main() {
+	if sandbox.RunExecModeIfRequested(os.Args) {
+		return
+	}
 	if err := refuseLegacyStores(); err != nil {
 		log.Fatalf("html protocol: %v", err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	sandboxHelper, err := sandbox.ResolveHelper(htmlSandboxDisabledEnv)
+	if err != nil {
+		log.Fatalf("html sandbox: %v", err)
+	}
+	concurrency, err := htmlFreeSlots()
+	if err != nil {
+		log.Fatalf("html protocol: %v", err)
+	}
+	conv, err := convert.ConfinedChromium(sandboxHelper, concurrency, "HTML_WORKER_CONCURRENCY")
+	if err != nil {
+		log.Fatalf("html sandbox: %v", err)
+	}
+	convert.Default.Register(conv)
+	if len(sandboxHelper) == 0 {
+		log.Printf("%s=true: the engine can read every file in this container", htmlSandboxDisabledEnv)
+	} else {
+		log.Printf("html sandbox: landlock via %s", strings.Join(sandboxHelper, " "))
+	}
+
+	preflightCtx, cancelPreflight := context.WithTimeout(ctx, 60*time.Second)
+	proof, err := convert.HTMLPreflight(preflightCtx, conv)
+	cancelPreflight()
+	if err != nil {
+		log.Fatalf("html sandbox preflight: %v", err)
+	}
+	if len(sandboxHelper) > 0 {
+		if proof.OutsideBytes > 0 {
+			log.Printf("html sandbox proven: the engine rendered inside the job directory and was denied a file outside every grant (inside pdf %d bytes, outside pdf %d bytes, marker absent)", proof.InsideBytes, proof.OutsideBytes)
+		} else {
+			log.Printf("html sandbox proven: the engine rendered inside the job directory and was denied a file outside every grant (inside pdf %d bytes, chromium net::ERR_ACCESS_DENIED, no outside pdf)", proof.InsideBytes)
+		}
+	}
+
 	dial, err := loadProtocolDial()
 	if err != nil {
 		log.Fatalf("html protocol: %v", err)

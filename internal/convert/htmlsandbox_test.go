@@ -176,6 +176,51 @@ func TestMakeTempDirSurvivesSweepOfItsAlias(t *testing.T) {
 	}
 }
 
+func TestSecondJobSurvivesSweepOfTmpdirAlias(t *testing.T) {
+	root := t.TempDir()
+	jobsPath := filepath.Join(root, "jobs")
+	if err := os.MkdirAll(jobsPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := canonicalPath(jobsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "html-tmp")
+	if err := os.Symlink(jobs, alias); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", alias)
+	first, err := MakeTempDir("", "html-job-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := filepath.Join(first, "in.html")
+	if err := os.WriteFile(input, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := sweepSharedTmp(root, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(alias); !os.IsNotExist(err) {
+		t.Fatalf("alias survived: %v", err)
+	}
+	second, err := MakeTempDir("", "html-job-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		os.RemoveAll(first)
+		os.RemoveAll(second)
+	})
+	if _, err := os.ReadFile(input); err != nil {
+		t.Fatalf("first job: %v", err)
+	}
+	if !strings.HasPrefix(second, jobs+string(filepath.Separator)) {
+		t.Fatalf("second dir %s is not under %s", second, jobs)
+	}
+}
+
 func TestSweepRemovesSymlinkNotItsTarget(t *testing.T) {
 	root := t.TempDir()
 	keep := filepath.Join(root, "current")

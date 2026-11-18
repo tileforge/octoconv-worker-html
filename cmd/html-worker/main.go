@@ -51,6 +51,9 @@ func main() {
 		if err := refuseSweptProtocolFiles(); err != nil {
 			log.Fatalf("html sandbox: %v", err)
 		}
+		if err := convert.StabilizeTempDir(); err != nil {
+			log.Fatalf("html sandbox: %v", err)
+		}
 	}
 
 	preflightCtx, cancelPreflight := context.WithTimeout(ctx, 60*time.Second)

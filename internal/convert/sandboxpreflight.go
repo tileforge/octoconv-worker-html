@@ -90,6 +90,11 @@ func canonicalPath(p string) (string, error) {
 // MkdirTemp keeps a TMPDIR symlink in the returned path. The sweep deletes
 // that symlink when it lies inside /tmp, so the caller must keep this path.
 func MakeTempDir(base, pattern string) (string, error) {
+	if base == "" {
+		if err := StabilizeTempDir(); err != nil {
+			return "", err
+		}
+	}
 	dir, err := os.MkdirTemp(base, pattern)
 	if err != nil {
 		return "", err
@@ -100,6 +105,31 @@ func MakeTempDir(base, pattern string) (string, error) {
 		return "", err
 	}
 	return resolved, nil
+}
+
+// StabilizeTempDir points TMPDIR at the directory it resolves to.
+// os.MkdirTemp reads TMPDIR on every call. The sweep can remove a symlink
+// inside /tmp that the variable still names, and the next call then fails.
+func StabilizeTempDir() error {
+	raw, ok := os.LookupEnv("TMPDIR")
+	if !ok || raw == "" {
+		return nil
+	}
+	resolved, err := canonicalPath(raw)
+	if err != nil {
+		return fmt.Errorf("TMPDIR: %w", err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return fmt.Errorf("TMPDIR: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("TMPDIR %s is not a directory", raw)
+	}
+	if resolved == raw {
+		return nil
+	}
+	return os.Setenv("TMPDIR", resolved)
 }
 
 func resolveExisting(p string) string {

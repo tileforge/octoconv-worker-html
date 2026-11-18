@@ -23,23 +23,18 @@ func (ChromiumConverter) Pairs() []Pair {
 
 const cspNoScriptMeta = `<meta http-equiv="Content-Security-Policy" content="script-src 'none'; object-src 'none'; frame-src 'none'; child-src 'none'">`
 
-const defaultPrintCSS = "<style>@page { size: A4 !important; }\n" +
-	"*, *::before, *::after { -webkit-print-color-adjust: economy !important; print-color-adjust: economy !important; " +
-	"background: none !important; background-color: transparent !important; background-image: none !important; }\n" +
-	"</style>"
-
-// Convert renders inPath to outPath. opts must be empty. Print options are
-// not on a protocol assignment, and a non-empty map would otherwise be ignored.
+// Convert renders inPath to outPath. opts are the assignment parameters.
 func (ChromiumConverter) Convert(ctx context.Context, inPath, outPath string, opts map[string]any) error {
-	if len(opts) != 0 {
-		return fmt.Errorf("chromium: unsupported option")
+	parsed, err := htmlOptsFromMap(opts)
+	if err != nil {
+		return fmt.Errorf("chromium: %w", err)
 	}
 	input, err := os.ReadFile(inPath)
 	if err != nil {
 		return fmt.Errorf("chromium: read input: %w", err)
 	}
 	workDir := filepath.Dir(outPath)
-	rendered := injectPrintCSS(injectCSPFirst(input, cspNoScriptMeta), defaultPrintCSS)
+	rendered := injectPrintCSS(injectCSPFirst(input, cspNoScriptMeta), buildPrintCSS(parsed))
 	renderedPath := filepath.Join(workDir, "rendered.html")
 	if err := os.WriteFile(renderedPath, rendered, 0o600); err != nil {
 		return fmt.Errorf("chromium: write rendered html: %w", err)

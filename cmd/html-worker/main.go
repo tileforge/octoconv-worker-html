@@ -1,4 +1,4 @@
-// Command html-worker runs one approved html capability over Worker Protocol v1.
+// Command html-worker runs one approved html capability over Worker Protocol generation 2.
 package main
 
 import (

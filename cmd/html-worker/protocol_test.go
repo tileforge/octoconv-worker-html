@@ -233,6 +233,39 @@ func TestAssignmentOutputs(t *testing.T) {
 	}
 }
 
+func TestAssignmentParameters(t *testing.T) {
+	for _, raw := range []string{"", "null", "{}", "  {}  "} {
+		opts, err := assignmentParameters(json.RawMessage(raw))
+		if err != nil || opts != nil {
+			t.Fatalf("%q -> %#v %v", raw, opts, err)
+		}
+	}
+	opts, err := assignmentParameters(json.RawMessage(`{"page_size":"a5","margin_mm":0}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts["page_size"] != "a5" || opts["margin_mm"] != float64(0) {
+		t.Fatalf("%#v", opts)
+	}
+	if _, err := assignmentParameters(json.RawMessage(`[1]`)); err == nil {
+		t.Fatal("array accepted")
+	}
+	if _, err := assignmentParameters(json.RawMessage(`"a4"`)); err == nil {
+		t.Fatal("string accepted")
+	}
+}
+
+type recordingConverter struct {
+	opts map[string]any
+}
+
+func (recordingConverter) Pairs() []convert.Pair { return nil }
+
+func (r *recordingConverter) Convert(_ context.Context, _, outPath string, opts map[string]any) error {
+	r.opts = opts
+	return os.WriteFile(outPath, []byte("%PDF-1.4\n"), 0o600)
+}
+
 func TestHTMLEngineCode(t *testing.T) {
 	if htmlEngineCode(context.DeadlineExceeded) != "timeout" {
 		t.Fatal("timeout")
@@ -281,6 +314,13 @@ func protocolTestClient(t *testing.T, handler http.Handler, trip *deadlineTrip) 
 func TestHelloRequestHasDeadline(t *testing.T) {
 	trip := &deadlineTrip{}
 	c := protocolTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		if !bytes.Contains(raw, []byte(`"protocol_version":2`)) {
+			t.Errorf("hello body %s", raw)
+		}
 		_, _ = io.WriteString(w, `{"session_id":"sess","session_token":"token","lease_seconds":30,"pull_wait_seconds":0,"heartbeat_interval_seconds":10}`)
 	}), trip)
 	if _, err := c.hello(context.Background()); err != nil {
@@ -507,7 +547,7 @@ func TestHeartbeatSessionClosedStopsTheAttempt(t *testing.T) {
 		case <-ctx.Done():
 			return
 		}
-		_ = c.postHeartbeat(ctx, []byte(`{"protocol_version":1}`))
+		_ = c.postHeartbeat(ctx, []byte(`{"protocol_version":2}`))
 	}()
 	err := c.runAssignment(ctx, asgn, controlJSON{})
 	if !errors.Is(err, errSessionClosed) {
@@ -558,7 +598,7 @@ func TestHeartbeatErrorLeavesTheAttemptRunning(t *testing.T) {
 		cancel: cancel,
 		flag:   &flag,
 	})
-	if err := c.postHeartbeat(context.Background(), []byte(`{"protocol_version":1}`)); err != nil {
+	if err := c.postHeartbeat(context.Background(), []byte(`{"protocol_version":2}`)); err != nil {
 		t.Fatal(err)
 	}
 	if c.sessionFailure() != nil || attempt.Err() != nil || flag.outcome() != "" {
@@ -659,6 +699,72 @@ func TestHTMLPairPostsAnAcceptedComplete(t *testing.T) {
 	}
 }
 
+func TestPrintParametersReachTheConverter(t *testing.T) {
+	var mu sync.Mutex
+	var fails [][]byte
+	c := protocolTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte("<html></html>"))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/fail") {
+			mu.Lock()
+			fails = append(fails, append([]byte(nil), body...))
+			mu.Unlock()
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}), nil)
+	c.fileHTTP = c.coreHTTP
+	c.operation = convert.OperationConvert
+	c.engineLimit = time.Minute
+	c.leaseSeconds = 30
+	c.sessionToken = "token"
+	rec := &recordingConverter{}
+	c.lookupOp = func(op, from, to string) (convert.Converter, bool) {
+		if op != convert.OperationConvert || from != "html" || to != "pdf" {
+			return nil, false
+		}
+		return rec, true
+	}
+	href := c.core.String() + "/objects/html"
+	asgn := assignmentJSON{
+		AttemptID:       "html-pdf",
+		AttemptToken:    "attempt-token",
+		AttemptDeadline: time.Now().Add(30 * time.Minute).Format(time.RFC3339Nano),
+		LeaseExpiresAt:  time.Now().Add(time.Hour).Format(time.RFC3339Nano),
+		Limits:          limitsJSON{MaxOutputBytes: convert.MaxFileBytes},
+		Inputs:          []fileLinkJSON{{Role: "source", Ordinal: 0, Href: href, Format: "html"}},
+		Outputs:         []fileLinkJSON{{Role: "primary", Ordinal: 0, Href: href, Format: "pdf"}},
+		Parameters:      json.RawMessage(`{"page_size":"legal","margin_mm":12,"landscape":true,"print_background":false}`),
+	}
+	if err := c.runAssignment(context.Background(), asgn, controlJSON{}); err != nil {
+		t.Fatal(err)
+	}
+	if rec.opts["page_size"] != "legal" || rec.opts["margin_mm"] != float64(12) || rec.opts["landscape"] != true || rec.opts["print_background"] != false {
+		t.Fatalf("%#v", rec.opts)
+	}
+
+	rec.opts = map[string]any{"called": true}
+	asgn.AttemptID = "bad-parameters"
+	asgn.Parameters = json.RawMessage(`[1]`)
+	if err := c.runAssignment(context.Background(), asgn, controlJSON{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, called := rec.opts["called"]; !called {
+		t.Fatal("bad parameters reached the converter")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(fails) != 1 || !bytes.Contains(fails[0], []byte(`"protocol_version":2`)) || !bytes.Contains(fails[0], []byte(`"engine_code":"engine_error"`)) {
+		t.Fatalf("fail bodies %q", fails)
+	}
+}
+
 type putBody struct {
 	body        []byte
 	contentType string
@@ -684,7 +790,7 @@ func acceptHTMLComplete(raw []byte, puts map[string]putBody) error {
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		return os.ErrInvalid
 	}
-	if body.ProtocolVersion != 1 || len(body.Artifacts) != 1 {
+	if body.ProtocolVersion != protocolVersion || len(body.Artifacts) != 1 {
 		return os.ErrInvalid
 	}
 	art := body.Artifacts[0]

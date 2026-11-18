@@ -53,8 +53,18 @@ func ConfinedChromium(helper []string, concurrency int, concurrencyEnv string) (
 }
 
 // os.RemoveAll on a symlink removes the symlink, not its target.
+// filepath.Clean does not follow a TMPDIR symlink, so the job path is
+// resolved before it is compared with entries under /tmp.
 func sweepSharedTmp(dir, keep string) error {
-	return sweepExcept(filepath.Clean(dir), filepath.Clean(keep))
+	resolvedDir, err := canonicalPath(dir)
+	if err != nil {
+		return fmt.Errorf("%w: sweep %s before the task: %w", ErrEngineSandboxUnavailable, dir, err)
+	}
+	resolvedKeep, err := canonicalPath(keep)
+	if err != nil {
+		return fmt.Errorf("%w: sweep %s before the task: %w", ErrEngineSandboxUnavailable, keep, err)
+	}
+	return sweepExcept(resolvedDir, resolvedKeep)
 }
 
 func sweepExcept(dir, keep string) error {

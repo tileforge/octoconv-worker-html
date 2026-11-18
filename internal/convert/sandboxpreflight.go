@@ -78,6 +78,14 @@ func pathUnder(path, root string) (bool, error) {
 	return true, nil
 }
 
+func canonicalPath(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(abs)
+}
+
 func resolveExisting(p string) string {
 	p = filepath.Clean(p)
 	var suffix []string

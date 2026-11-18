@@ -103,6 +103,66 @@ func TestSweepRemovesSiblingsUnderAncestor(t *testing.T) {
 	}
 }
 
+func TestSweepKeepsJobThroughTmpAlias(t *testing.T) {
+	root := t.TempDir()
+	jobs := filepath.Join(root, "jobs")
+	if err := os.MkdirAll(jobs, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "html-tmp")
+	if err := os.Symlink(jobs, alias); err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(alias, "current")
+	if err := os.MkdirAll(keep, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(keep, "in.html"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(jobs, "old")
+	if err := os.MkdirAll(old, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(old, "secret"), []byte("s"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := sweepSharedTmp(root, keep); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(keep, "in.html")); err != nil {
+		t.Fatalf("current job: %v", err)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Fatalf("old job survived: %v", err)
+	}
+}
+
+func TestSweepRemovesSymlinkNotItsTarget(t *testing.T) {
+	root := t.TempDir()
+	keep := filepath.Join(root, "current")
+	if err := os.MkdirAll(keep, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(target, []byte("s"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := sweepSharedTmp(root, keep); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(link); !os.IsNotExist(err) {
+		t.Fatalf("symlink survived: %v", err)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("symlink target: %v", err)
+	}
+}
+
 func TestPathUnderFollowsSymlinks(t *testing.T) {
 	root := t.TempDir()
 	inside := filepath.Join(root, "a", "key")

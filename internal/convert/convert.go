@@ -1,4 +1,4 @@
-// Package convert turns one HTML file into a PDF with chromium-headless-shell.
+// Package convert turns one HTML file into a PDF, or a primary PNG of that printed PDF.
 package convert
 
 import (
@@ -10,6 +10,7 @@ import (
 const (
 	EngineHTML           = "html"
 	OperationConvert     = "convert"
+	OperationRender      = "render"
 	DefaultEngineTimeout = 60 * time.Second
 	MaxFileBytes         = 100 << 20
 )
@@ -33,6 +34,8 @@ func MIMEType(format string) string {
 		return "application/pdf"
 	case "html":
 		return "text/html"
+	case "png":
+		return "image/png"
 	default:
 		return "application/octet-stream"
 	}
@@ -59,11 +62,26 @@ func NewRegistry() *Registry {
 	return &Registry{m: make(map[opKey]Converter)}
 }
 
+type operationalConverter interface {
+	Converter
+	Operation() string
+}
+
+func operationOf(c Converter) string {
+	if op, ok := c.(operationalConverter); ok {
+		if name := op.Operation(); name != "" {
+			return name
+		}
+	}
+	return OperationConvert
+}
+
 // Register indexes each pair c reports.
 func (r *Registry) Register(c Converter) {
+	op := operationOf(c)
 	for _, pair := range c.Pairs() {
 		r.m[opKey{
-			Operation: OperationConvert,
+			Operation: op,
 			From:      NormalizeFormat(pair.From),
 			To:        NormalizeFormat(pair.To),
 		}] = c

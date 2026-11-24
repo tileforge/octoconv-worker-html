@@ -1,0 +1,16 @@
+{
+  "capabilities": [
+    {
+      "id": "octoconv.render.html",
+      "version": 1,
+      "legacy": {"operation": "render", "engine": "html"},
+      "client_operation": "render",
+      "inputs": [{"role": "source", "min": 1, "max": 1}],
+      "outputs": [{"role": "primary", "min": 1, "max": 1}],
+      "parameter_schema": {},
+      "formats": [
+        {"from": "html", "to": "png"}
+      ]
+    }
+  ]
+}

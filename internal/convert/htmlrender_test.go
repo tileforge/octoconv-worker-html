@@ -205,6 +205,42 @@ func TestHTMLRenderSize(t *testing.T) {
 	}
 }
 
+func TestHTMLRenderSweepKeepsJobInput(t *testing.T) {
+	root := t.TempDir()
+	job := filepath.Join(root, "job")
+	if err := os.Mkdir(job, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	in := filepath.Join(job, "in.html")
+	if err := os.WriteFile(in, []byte("<html></html>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	junk := filepath.Join(root, "junk")
+	if err := os.WriteFile(junk, []byte("j"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	orig, ok := Default.LookupOp(OperationConvert, "html", "pdf")
+	if !ok {
+		t.Fatal("missing html to pdf")
+	}
+	Default.Register(ChromiumConverter{sharedTmp: root})
+	t.Cleanup(func() { Default.Register(orig) })
+	t.Setenv("PATH", t.TempDir())
+	out := filepath.Join(job, "out.png")
+	if err := (HTMLRenderConverter{}).Convert(context.Background(), in, out, nil); err == nil {
+		t.Fatal("engine started")
+	}
+	if _, err := os.ReadFile(in); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(junk); !os.IsNotExist(err) {
+		t.Fatalf("junk survived: %v", err)
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Fatal("png left")
+	}
+}
+
 func TestHTMLRenderEngineDown(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PATH", dir)

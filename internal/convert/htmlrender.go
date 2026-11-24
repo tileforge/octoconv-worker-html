@@ -116,14 +116,23 @@ func printHTMLPDF(ctx context.Context, inPath, pdfPath, workDir string) error {
 	if !ok {
 		return fmt.Errorf("html render: html to pdf converter is %T", conv)
 	}
-	if chrome.sharedTmp != "" {
-		if err := sweepSharedTmp(chrome.sharedTmp, workDir); err != nil {
-			return fmt.Errorf("html render: %w", err)
-		}
-	}
 	input, err := os.ReadFile(inPath)
 	if err != nil {
 		return fmt.Errorf("html render: read input: %w", err)
+	}
+	if chrome.sharedTmp != "" {
+		keep := workDir
+		jobDir := filepath.Dir(inPath)
+		under, err := pathUnder(workDir, jobDir)
+		if err != nil {
+			return fmt.Errorf("html render: %w", err)
+		}
+		if under {
+			keep = jobDir
+		}
+		if err := sweepSharedTmp(chrome.sharedTmp, keep); err != nil {
+			return fmt.Errorf("html render: %w", err)
+		}
 	}
 	rendered := injectPrintCSS(injectCSPFirst(input, cspNoScriptMeta), buildPrintCSS(htmlOpts{}))
 	renderedPath := filepath.Join(workDir, "rendered.html")

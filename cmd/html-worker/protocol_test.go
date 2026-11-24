@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -256,12 +257,14 @@ func TestAssignmentParameters(t *testing.T) {
 }
 
 type recordingConverter struct {
-	opts map[string]any
+	opts  map[string]any
+	calls int
 }
 
 func (recordingConverter) Pairs() []convert.Pair { return nil }
 
 func (r *recordingConverter) Convert(_ context.Context, _, outPath string, opts map[string]any) error {
+	r.calls++
 	r.opts = opts
 	return os.WriteFile(outPath, []byte("%PDF-1.4\n"), 0o600)
 }
@@ -869,4 +872,174 @@ func TestAttemptDeadlineStopsStalledDownload(t *testing.T) {
 	default:
 		t.Fatal("fail was not posted")
 	}
+}
+
+func TestManifestOperationRender(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "schema", "manifest-html-render.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := manifestOperation(raw)
+	if err != nil || got != convert.OperationRender {
+		t.Fatalf("operation %q %v", got, err)
+	}
+}
+
+func TestHTMLRenderAssignmentNilOpts(t *testing.T) {
+	for _, params := range []json.RawMessage{nil, json.RawMessage("null"), json.RawMessage("{}")} {
+		rec := &recordingConverter{}
+		fails, puts := runHTMLRenderAssignment(t, []byte("<html></html>"), "html", "png", params, rec)
+		if fails != 0 || len(puts) != 1 || rec.calls != 1 || rec.opts != nil {
+			t.Fatalf("params %s fails %d puts %d calls %d opts %#v", params, fails, len(puts), rec.calls, rec.opts)
+		}
+		if puts[0].contentType != "image/png" {
+			t.Fatalf("content type %s", puts[0].contentType)
+		}
+	}
+}
+
+func TestHTMLRenderAssignmentUnserved(t *testing.T) {
+	fails, puts := runHTMLRenderAssignment(t, []byte("%PDF-1.4"), "pdf", "png", nil, nil)
+	if fails != 1 || len(puts) != 0 {
+		t.Fatalf("fails %d puts %d", fails, len(puts))
+	}
+}
+
+func TestHTMLRenderAssignmentContent(t *testing.T) {
+	requireHTMLProtocolEngines(t)
+	src := []byte(`<!DOCTYPE html><html><head></head><body><p style="font-size:96px;color:#000000">X</p></body></html>`)
+	want := htmlRenderBytes(t, src)
+	fails, puts := runHTMLRenderAssignment(t, src, "html", "png", nil, nil)
+	if fails != 0 || len(puts) != 1 || puts[0].contentType != "image/png" || !bytes.Equal(puts[0].body, want) {
+		t.Fatalf("fails %d puts %d", fails, len(puts))
+	}
+}
+
+func TestHTMLRenderAssignmentAllBlank(t *testing.T) {
+	requireHTMLProtocolEngines(t)
+	src := []byte(`<!DOCTYPE html><html><head></head><body></body></html>`)
+	want := htmlRenderBytes(t, src)
+	fails, puts := runHTMLRenderAssignment(t, src, "html", "png", nil, nil)
+	if fails != 0 || len(puts) != 1 || puts[0].contentType != "image/png" || !bytes.Equal(puts[0].body, want) {
+		t.Fatalf("fails %d puts %d", fails, len(puts))
+	}
+}
+
+func TestHTMLRenderAssignmentParameters(t *testing.T) {
+	for _, raw := range []string{
+		`{"page_size":"a4"}`,
+		`{"margin_mm":0}`,
+		`{"landscape":true}`,
+		`{"print_background":true}`,
+		`{"size":1280}`,
+	} {
+		rec := &recordingConverter{}
+		fails, puts := runHTMLRenderAssignment(t, []byte("<html></html>"), "html", "png", json.RawMessage(raw), rec)
+		if fails != 1 || len(puts) != 0 || rec.calls != 0 {
+			t.Fatalf("%s fails %d puts %d calls %d", raw, fails, len(puts), rec.calls)
+		}
+	}
+	for _, params := range []json.RawMessage{nil, json.RawMessage("null"), json.RawMessage("{}")} {
+		rec := &recordingConverter{}
+		fails, puts := runHTMLRenderAssignment(t, []byte("<html></html>"), "html", "png", params, rec)
+		if fails != 0 || len(puts) != 1 || rec.calls != 1 || rec.opts != nil {
+			t.Fatalf("params %s fails %d puts %d calls %d opts %#v", params, fails, len(puts), rec.calls, rec.opts)
+		}
+	}
+}
+
+func TestHTMLRenderAssignmentUndrawable(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	fails, puts := runHTMLRenderAssignment(t, []byte("<html></html>"), "html", "png", nil, nil)
+	if fails != 1 || len(puts) != 0 {
+		t.Fatalf("fails %d puts %d", fails, len(puts))
+	}
+}
+
+func requireHTMLProtocolEngines(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("chromium-headless-shell"); err != nil {
+		t.Skip("chromium-headless-shell is not on PATH")
+	}
+	if _, err := exec.LookPath("pdftoppm"); err != nil {
+		t.Skip("pdftoppm is not on PATH")
+	}
+}
+
+func htmlRenderBytes(t *testing.T, src []byte) []byte {
+	t.Helper()
+	dir := t.TempDir()
+	in := filepath.Join(dir, "in.html")
+	out := filepath.Join(dir, "out.png")
+	if err := os.WriteFile(in, src, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := (convert.HTMLRenderConverter{}).Convert(context.Background(), in, out, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func runHTMLRenderAssignment(t *testing.T, src []byte, from, to string, params json.RawMessage, rec *recordingConverter) (int, []putBody) {
+	t.Helper()
+	var mu sync.Mutex
+	fails := 0
+	var puts []putBody
+	c := protocolTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = w.Write(src)
+		case http.MethodPut:
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			mu.Lock()
+			puts = append(puts, putBody{body: body, contentType: r.Header.Get("Content-Type")})
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			if strings.Contains(r.URL.Path, "/fail") {
+				mu.Lock()
+				fails++
+				mu.Unlock()
+			}
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}), nil)
+	c.fileHTTP = c.coreHTTP
+	c.operation = convert.OperationRender
+	c.engineLimit = time.Minute
+	c.leaseSeconds = 30
+	c.sessionToken = "token"
+	if rec != nil {
+		c.lookupOp = func(op, gotFrom, gotTo string) (convert.Converter, bool) {
+			if op != convert.OperationRender || gotFrom != from || gotTo != to {
+				return nil, false
+			}
+			return rec, true
+		}
+	}
+	href := c.core.String() + "/objects/render"
+	asgn := assignmentJSON{
+		AttemptID:       "render-" + from,
+		AttemptToken:    "attempt-token",
+		AttemptDeadline: time.Now().Add(30 * time.Minute).Format(time.RFC3339Nano),
+		LeaseExpiresAt:  time.Now().Add(time.Hour).Format(time.RFC3339Nano),
+		Limits:          limitsJSON{MaxOutputBytes: convert.MaxFileBytes},
+		Inputs:          []fileLinkJSON{{Role: "source", Ordinal: 0, Href: href, Format: from}},
+		Outputs:         []fileLinkJSON{{Role: "primary", Ordinal: 0, Href: href, Format: to}},
+		Parameters:      params,
+	}
+	if err := c.runAssignment(context.Background(), asgn, controlJSON{}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	return fails, puts
 }

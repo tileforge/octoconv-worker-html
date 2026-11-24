@@ -34,7 +34,7 @@ var htmlReadOnly = []string{
 	"/dev/urandom",
 }
 
-var htmlEngines = []string{"chromium-headless-shell"}
+var htmlEngines = []string{"chromium-headless-shell", "pdftoppm"}
 
 // /tmp is itself a grant, so the outside fixture cannot be created there.
 const htmlPreflightOutsideBase = "/var/tmp"
